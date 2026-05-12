@@ -1,0 +1,11 @@
+django
+djangorestframework
+djangorestframework-simplejwt
+django-cors-headers
+requests
+celery[redis]
+redis
+beautifulsoup4
+lxml
+python-dotenv
+playwright>=1.40.0
