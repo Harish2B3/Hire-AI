@@ -24,6 +24,11 @@ class RequirementExtractionOutputSerializer(serializers.Serializer):
     provider_used = serializers.CharField()
 
 
+class GeminiGenerateSerializer(serializers.Serializer):
+    contents = serializers.JSONField()
+    config = serializers.JSONField(required=False)
+
+
 class HiringTrendSerializer(serializers.ModelSerializer):
     class Meta:
         model = HiringTrend

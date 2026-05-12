@@ -1,22 +1,39 @@
 const TOKEN_KEY = 'hireai_access_token';
 const REFRESH_KEY = 'hireai_refresh_token';
+const REMEMBER_UNTIL_KEY = 'hireai_remember_until';
+const REMEMBER_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function getApiOrigin(): string {
   return import.meta.env.VITE_API_URL?.replace(/\/$/, '') || '';
 }
 
 export function getStoredAccessToken(): string | null {
+  const rememberedUntil = Number(localStorage.getItem(REMEMBER_UNTIL_KEY) || 0);
+  if (rememberedUntil > Date.now()) {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+  if (rememberedUntil) {
+    clearStoredTokens();
+  }
   return sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function setStoredTokens(access: string, refresh: string) {
-  sessionStorage.setItem(TOKEN_KEY, access);
-  sessionStorage.setItem(REFRESH_KEY, refresh);
+export function setStoredTokens(access: string, refresh: string, remember = false) {
+  clearStoredTokens();
+  const storage = remember ? localStorage : sessionStorage;
+  storage.setItem(TOKEN_KEY, access);
+  storage.setItem(REFRESH_KEY, refresh);
+  if (remember) {
+    localStorage.setItem(REMEMBER_UNTIL_KEY, String(Date.now() + REMEMBER_DURATION_MS));
+  }
 }
 
 export function clearStoredTokens() {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(REMEMBER_UNTIL_KEY);
 }
 
 export const AUTH_EXPIRED_EVENT = 'hireai-auth-expired';
@@ -33,14 +50,21 @@ function apiUrl(path: string): string {
 }
 
 /** Short error text for failed API responses (avoids dumping Django HTML debug pages). */
-async function bodyToApiErrorMessage(res: Response): Promise<string> {
+async function bodyToApiErrorMessage(
+  res: Response,
+  options: { suppressAuthExpiredEvent?: boolean } = {}
+): Promise<string> {
   const text = await res.text();
   const ct = (res.headers.get('content-type') || '').toLowerCase();
   if (ct.includes('application/json')) {
     try {
       const j = JSON.parse(text) as { code?: unknown; detail?: unknown; [key: string]: unknown };
       if (res.status === 401 || j.code === 'token_not_valid') {
-        expireAuthSession();
+        if (options.suppressAuthExpiredEvent) {
+          clearStoredTokens();
+        } else {
+          expireAuthSession();
+        }
         return 'Your session expired. Please sign in again.';
       }
       if (typeof j.detail === 'string' && j.detail.trim()) return j.detail.trim();
@@ -197,6 +221,12 @@ export type TokenResponse = {
   access: string;
   refresh: string;
   detail?: string;
+  mfa_required?: false;
+};
+
+export type GeminiGenerateResponse = {
+  text: string;
+  model?: string;
 };
 
 export async function loginRequest(username: string, password: string) {
@@ -208,7 +238,7 @@ export async function loginRequest(username: string, password: string) {
   if (!res.ok) {
     throw new Error(await bodyToApiErrorMessage(res));
   }
-  return res.json() as Promise<MfaStartResponse>;
+  return res.json() as Promise<MfaStartResponse | TokenResponse>;
 }
 
 export async function registerRequest(body: {
@@ -292,16 +322,35 @@ export async function verifyPasswordResetRequest(
   return res.json();
 }
 
+export async function geminiGenerateRequest(
+  accessToken: string,
+  body: { contents: unknown; config?: Record<string, unknown> }
+): Promise<GeminiGenerateResponse> {
+  const res = await fetch(apiUrl('/api/tasks/gemini/generate/'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(await bodyToApiErrorMessage(res));
+  }
+  return res.json();
+}
+
 export async function fetchDashboard(
   accessToken: string,
-  query: Record<string, string> = {}
+  query: Record<string, string> = {},
+  options: { suppressAuthExpiredEvent?: boolean } = {}
 ): Promise<DashboardPayload> {
   const qs = new URLSearchParams(query);
   const res = await fetch(apiUrl(`/api/tasks/dashboard-data/?${qs.toString()}`), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
-    throw new Error(await bodyToApiErrorMessage(res));
+    throw new Error(await bodyToApiErrorMessage(res, options));
   }
   return res.json();
 }

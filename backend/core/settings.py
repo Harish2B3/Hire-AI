@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
@@ -27,6 +27,10 @@ APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY", "")
 
 # CompanyEnrich (server-side only; used by company search and analytics)
 COMPANY_ENRICH_API_KEY = os.environ.get("COMPANY_ENRICH_API_KEY", "")
+
+# Gemini (server-side only; used by /api/tasks/gemini/generate/)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
 # Temporary first-run admin. The frontend forces this account to create a real
 # admin account, then the backend deletes this bootstrap user permanently.
@@ -82,6 +86,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "authentication.middleware.BootstrapAdminMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

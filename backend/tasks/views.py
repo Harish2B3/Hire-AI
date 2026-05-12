@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from .models import CachedPerson, CompanyAnalytics, HiringTrend, JobOpening, Recruiter, ScrapedJob, Task
 from .serializers import (
     CompanyAnalyticsSerializer,
+    GeminiGenerateSerializer,
     HiringTrendSerializer,
     RecruiterSerializer,
     TaskSerializer,
@@ -27,6 +28,72 @@ from .platform_jobs import filter_jobs, get_cached_platform_jobs
 from authentication.permissions import IsAdminOrRecruiter, IsAdminRole, user_role
 
 logger = logging.getLogger(__name__)
+
+
+def _gemini_part(part):
+    if isinstance(part, str):
+        return {"text": part}
+    if isinstance(part, dict):
+        if "inlineData" in part:
+            inline_data = part["inlineData"] or {}
+            return {
+                "inline_data": {
+                    "data": inline_data.get("data", ""),
+                    "mime_type": inline_data.get("mimeType") or inline_data.get("mime_type") or "text/plain",
+                }
+            }
+        if "inline_data" in part:
+            return part
+        if "text" in part:
+            return {"text": str(part.get("text") or "")}
+    return {"text": str(part)}
+
+
+def _gemini_contents(contents):
+    if isinstance(contents, str):
+        return [{"parts": [{"text": contents}]}]
+    if isinstance(contents, list):
+        if all(isinstance(item, dict) and "parts" in item for item in contents):
+            return contents
+        return [{"parts": [_gemini_part(item) for item in contents]}]
+    if isinstance(contents, dict) and "parts" in contents:
+        return [contents]
+    return [{"parts": [{"text": str(contents)}]}]
+
+
+def _gemini_payload(data):
+    payload = {"contents": _gemini_contents(data["contents"])}
+    config = data.get("config") or {}
+    generation_config = {}
+    if "temperature" in config:
+        generation_config["temperature"] = config["temperature"]
+    if "responseMimeType" in config:
+        generation_config["response_mime_type"] = config["responseMimeType"]
+    if generation_config:
+        payload["generationConfig"] = generation_config
+    system_instruction = config.get("systemInstruction")
+    if system_instruction:
+        payload["system_instruction"] = {"parts": [{"text": str(system_instruction)}]}
+    return payload
+
+
+def _gemini_error_message(response):
+    try:
+        return response.json().get("error", {}).get("message") or response.text
+    except ValueError:
+        return response.text
+
+
+def _should_try_next_gemini_model(response):
+    if response.status_code == 404:
+        return True
+    if response.status_code != 429:
+        return False
+    message = _gemini_error_message(response).lower()
+    return any(
+        marker in message
+        for marker in ("quota", "rate limit", "too many requests", "resource_exhausted")
+    )
 
 def _internal_opening_dict(job: JobOpening) -> dict:
     return {
@@ -189,6 +256,64 @@ class RequirementExtractionView(APIView):
         output_serializer = RequirementExtractionOutputSerializer(data=extracted)
         output_serializer.is_valid(raise_exception=True)
         return Response(output_serializer.validated_data, status=status.HTTP_200_OK)
+
+
+class GeminiGenerateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        api_key = getattr(settings, "GEMINI_API_KEY", "")
+        if not api_key:
+            return Response(
+                {"detail": "GEMINI_API_KEY is not configured on the server."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = GeminiGenerateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = _gemini_payload(serializer.validated_data)
+        configured_model = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash-lite")
+        models = list(
+            dict.fromkeys(
+                [
+                    configured_model,
+                    "gemini-2.0-flash-lite",
+                    "gemini-2.0-flash",
+                    "gemini-2.5-flash",
+                ]
+            )
+        )
+        last_response = None
+
+        for model in models:
+            endpoint = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            response = requests.post(
+                endpoint,
+                headers={"Content-Type": "application/json"},
+                timeout=60,
+                json=payload,
+            )
+            if response.ok:
+                body = response.json()
+                parts = (
+                    body.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [])
+                )
+                text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+                return Response({"text": text, "model": model}, status=status.HTTP_200_OK)
+            last_response = response
+            if not _should_try_next_gemini_model(response):
+                break
+
+        detail = _gemini_error_message(last_response) if last_response is not None else "Gemini request failed."
+        return Response(
+            {"detail": detail},
+            status=last_response.status_code if last_response is not None else status.HTTP_502_BAD_GATEWAY,
+        )
 
 
 class IndeedAutocompleteView(APIView):

@@ -16,3 +16,4 @@ frontend/.env.local
 *.log
 .idea/
 .vscode/
+test.py

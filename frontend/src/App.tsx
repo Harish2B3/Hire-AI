@@ -5,8 +5,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Lock, ArrowRight, Loader2, Zap, Eye, EyeOff, Chrome, Send, User, Bot, LogOut, MessageSquarePlus, Search, FolderDot, Sparkles, Ellipsis, Mic, Headphones, ImageIcon, PenLine, Globe, ChevronDown, Gift, Plus, Briefcase, TrendingUp, BarChart2, Cpu, Users, Filter, Paperclip, X, FileText, Clock, DollarSign, Target, Award, FileCheck, Settings, Menu, ClipboardList, MapPin, Activity, FileSpreadsheet, Download, FileJson } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
+import { Mail, Lock, ArrowRight, Loader2, Zap, Eye, EyeOff, Send, User, Bot, LogOut, MessageSquarePlus, Search, FolderDot, Sparkles, Ellipsis, Mic, Headphones, ImageIcon, PenLine, Globe, ChevronDown, Gift, Plus, Briefcase, TrendingUp, BarChart2, Cpu, Users, Filter, Paperclip, X, FileText, Clock, DollarSign, Target, Award, FileCheck, Settings, Menu, ClipboardList, MapPin, Activity, FileSpreadsheet, Download, FileJson } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -20,8 +19,10 @@ import {
   fetchAdminDashboard,
   fetchDashboard,
   fetchIndeedAutocomplete,
+  getStoredAccessToken,
   fetchPeopleSearch,
   forgotPasswordRequest,
+  geminiGenerateRequest,
   loginRequest,
   registerRequest,
   resendMfaRequest,
@@ -39,9 +40,6 @@ import {
   type DashboardPayload,
   verifyPasswordResetRequest,
 } from './api';
-
-const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
-const GEMINI_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite'];
 
 function searchTokens(value: string): string[] {
   return value.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length >= 2) ?? [];
@@ -113,6 +111,7 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [pendingMfa, setPendingMfa] = useState<{
     challengeId: number;
@@ -198,45 +197,15 @@ export default function App() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('geminiApiKey') || '');
-  const [chatgptApiKey, setChatgptApiKey] = useState(() => localStorage.getItem('chatgptApiKey') || '');
-
-  const getGeminiClient = () => {
-    const apiKey = (geminiApiKey || '').trim();
-    if (!apiKey) {
-      throw new Error('Gemini API key is missing. Add it in Application Settings, then try again.');
-    }
-    return new GoogleGenAI({ apiKey });
-  };
 
   const generateGeminiContent = async (request: {
     contents: any;
     config?: Record<string, unknown>;
   }) => {
-    const client = getGeminiClient();
-    const models = Array.from(new Set([DEFAULT_GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]));
-    let lastError: unknown = null;
-
-    for (const model of models) {
-      try {
-        return await client.models.generateContent({
-          model,
-          contents: request.contents,
-          config: request.config,
-        });
-      } catch (error) {
-        lastError = error;
-        const message = getGeminiErrorMessage(error).toLowerCase();
-        const shouldTryNext =
-          message.includes('not found') ||
-          message.includes('not supported') ||
-          message.includes('404');
-        if (!shouldTryNext) throw error;
-      }
+    if (!accessToken) {
+      throw new Error('Please sign in before using Gemini features.');
     }
-
-    throw lastError ?? new Error('No Gemini model was available for generateContent.');
+    return geminiGenerateRequest(accessToken, request);
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -260,8 +229,6 @@ export default function App() {
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('geminiApiKey', geminiApiKey);
-    localStorage.setItem('chatgptApiKey', chatgptApiKey);
     alert("Settings saved successfully!");
     setIsSettingsModalOpen(false);
   };
@@ -350,6 +317,80 @@ export default function App() {
     return companyTrends.find((company) => normalizedText(company.name).includes(selectedTrendQuery)) ?? null;
   }, [companyTrends, selectedTrendQuery]);
   const inferredCompanyTrend = selectedCompany ? estimateHiringTrendFromCompany(selectedCompany) : null;
+  const resumeMatchTerms = useMemo(() => {
+    if (!parsedData) return [];
+    return Array.from(new Set([
+      ...parsedData.skills.flatMap(searchTokens),
+      ...parsedData.roles.flatMap(searchTokens),
+    ])).filter((token) => token.length >= 3);
+  }, [parsedData]);
+  const resumeMatchedOpenings = useMemo(() => {
+    if (!parsedData || resumeMatchTerms.length === 0) return [];
+    return openings
+      .map((job) => {
+        const titleTokens = new Set(searchTokens(job.title));
+        const skillTokens = new Set((job.skills ?? []).flatMap(searchTokens));
+        const blobTokens = new Set(searchTokens([
+          job.title,
+          job.company,
+          job.location,
+          job.experience,
+          job.source ?? '',
+          ...(job.skills ?? []),
+        ].join(' ')));
+        let score = 0;
+        for (const term of resumeMatchTerms) {
+          if (skillTokens.has(term)) score += 12;
+          else if (titleTokens.has(term)) score += 10;
+          else if (blobTokens.has(term)) score += 4;
+        }
+        const roleHit = parsedData.roles.some((role) => {
+          const roleText = normalizedText(role);
+          const titleText = normalizedText(job.title);
+          return roleText && (titleText.includes(roleText) || roleText.includes(titleText));
+        });
+        if (roleHit) score += 18;
+        return { job, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+  }, [openings, parsedData, resumeMatchTerms]);
+  const resumeMatchedCompanies = useMemo(() => {
+    if (!parsedData) return [];
+    const companyScores = new Map<string, { name: string; openings: number; score: number; growth: string }>();
+    for (const { job, score } of resumeMatchedOpenings) {
+      const name = job.company || 'Unknown';
+      const existing = companyScores.get(name) ?? { name, openings: 0, score: 0, growth: 'Matched roles' };
+      existing.openings += 1;
+      existing.score += score;
+      const trend = companyTrends.find((company) => normalizedText(company.name) === normalizedText(name));
+      if (trend) {
+        existing.openings = Math.max(existing.openings, trend.openings);
+        existing.growth = trend.growth;
+      }
+      companyScores.set(name, existing);
+    }
+    for (const company of companyTrends) {
+      const blobTokens = new Set(searchTokens(company.name));
+      const termHits = resumeMatchTerms.filter((term) => blobTokens.has(term)).length;
+      if (termHits > 0 && !companyScores.has(company.name)) {
+        companyScores.set(company.name, {
+          name: company.name,
+          openings: company.openings,
+          score: termHits * 8,
+          growth: company.growth,
+        });
+      }
+    }
+    return Array.from(companyScores.values())
+      .map((company) => ({
+        ...company,
+        matchScore: Math.min(98, Math.max(55, Math.round(45 + company.score * 2))),
+      }))
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, 8);
+  }, [companyTrends, parsedData, resumeMatchedOpenings, resumeMatchTerms]);
   const hiringVolumeHistory = useMemo(() => {
     const d = dashboardData;
     if (!d) return [];
@@ -383,15 +424,37 @@ export default function App() {
     } else if (window.location.hash === '#features') {
       setAuthScreen('features');
     }
-    // Enforce explicit authentication each new app load.
-    clearStoredTokens();
+  }, []);
+
+  useEffect(() => {
+    const storedAccess = getStoredAccessToken();
+    if (!storedAccess) return;
+    let cancelled = false;
+    setIsDashboardLoading(true);
+    fetchDashboard(storedAccess, {}, { suppressAuthExpiredEvent: true })
+      .then((payload) => {
+        if (cancelled) return;
+        setAccessToken(storedAccess);
+        setDashboardData(payload);
+        setIsLoggedIn(true);
+        setAuthScreen('landing');
+      })
+      .catch(() => {
+        if (!cancelled) clearStoredTokens();
+      })
+      .finally(() => {
+        if (!cancelled) setIsDashboardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     // Client-side deterrent only; cannot fully block browser DevTools.
     const onContextMenu = (event: MouseEvent) => event.preventDefault();
     const onKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
+      const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
       const ctrlOrMeta = event.ctrlKey || event.metaKey;
       if (
         event.key === 'F12' ||
@@ -782,11 +845,21 @@ export default function App() {
         });
       } else {
         const res = await loginRequest(email, password);
-        setPendingMfa({
-          challengeId: res.challenge_id,
-          email: res.email,
-          purpose: 'login',
-        });
+        if ('access' in res && 'refresh' in res) {
+          setAccessToken(res.access);
+          setStoredTokens(res.access, res.refresh, rememberMe);
+          setPassword('');
+          setRememberMe(false);
+          setIsLoggedIn(true);
+          const fresh = await fetchDashboard(res.access);
+          setDashboardData(fresh);
+        } else {
+          setPendingMfa({
+            challengeId: res.challenge_id,
+            email: res.email,
+            purpose: 'login',
+          });
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Authentication failed';
@@ -805,10 +878,11 @@ export default function App() {
     try {
       const tokens = await verifyMfaRequest(pendingMfa.purpose, pendingMfa.challengeId, mfaCode.trim());
       setAccessToken(tokens.access);
-      setStoredTokens(tokens.access, tokens.refresh);
+      setStoredTokens(tokens.access, tokens.refresh, pendingMfa.purpose === 'login' && rememberMe);
       setPendingMfa(null);
       setMfaCode('');
       setPassword('');
+      setRememberMe(false);
       setIsLoggedIn(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Verification failed';
@@ -1533,7 +1607,13 @@ export default function App() {
 
                   {!isRegistering && (
                       <div className="flex items-center gap-2 py-1">
-                        <input type="checkbox" id="remember" className="w-3.5 h-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 focus:ring-offset-0 transition-all cursor-pointer" />
+                        <input
+                          type="checkbox"
+                          id="remember"
+                          checked={rememberMe}
+                          onChange={(e) => setRememberMe(e.target.checked)}
+                          className="w-3.5 h-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 focus:ring-offset-0 transition-all cursor-pointer"
+                        />
                         <label htmlFor="remember" className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">Remember for 30 days</label>
                       </div>
                   )}
@@ -1554,23 +1634,6 @@ export default function App() {
                   </button>
                 </form>
 
-                <div className="mt-8">
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-100"></div>
-                    </div>
-                    <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-widest">
-                      <span className="bg-white px-3 text-slate-400">Or continue with</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 flex gap-3">
-                    <button className="flex-1 flex items-center justify-center gap-2 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-all active:scale-[0.98] text-sm font-medium text-slate-700">
-                      <Chrome size={16} />
-                      <span>Google</span>
-                    </button>
-                  </div>
-                </div>
                 </>
                 )}
               </div>
@@ -3429,16 +3492,7 @@ export default function App() {
                                               <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full uppercase tracking-wider">AI Powered</span>
                                           </div>
                                           <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
-                                              {companyTrends.map((company) => {
-                                                  const blob = `${company.name} ${company.openings}`.toLowerCase();
-                                                  let matchScore = 45;
-                                                  parsedData.skills.forEach((skill) => {
-                                                    const s = skill.toLowerCase();
-                                                    if (blob.includes(s) || s.length > 2 && blob.includes(s.slice(0, 4)))
-                                                      matchScore += 8;
-                                                  });
-                                                  matchScore = Math.min(98, matchScore);
-                                                  return (
+                                              {resumeMatchedCompanies.map((company) => (
                                                       <div key={company.name} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all cursor-pointer">
                                                           <div className="flex items-center gap-4">
                                                               <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center font-bold text-slate-600">
@@ -3451,7 +3505,7 @@ export default function App() {
                                                           </div>
                                                           <div className="flex items-center gap-4">
                                                               <div className="text-right">
-                                                                  <div className="text-sm font-bold text-emerald-600">{matchScore}% Match</div>
+                                                                  <div className="text-sm font-bold text-emerald-600">{company.matchScore}% Match</div>
                                                                   <div className="text-[10px] text-slate-400 font-bold uppercase">Candidate Score</div>
                                                               </div>
                                                               <button className="p-2 hover:bg-slate-200 rounded-lg transition-colors">
@@ -3459,8 +3513,12 @@ export default function App() {
                                                               </button>
                                                           </div>
                                                       </div>
-                                                  );
-                                              })}
+                                              ))}
+                                              {resumeMatchedCompanies.length === 0 && (
+                                                <div className="p-6 text-center text-sm text-slate-500">
+                                                  No saved companies match the extracted resume skills yet.
+                                                </div>
+                                              )}
                                           </div>
                                       </div>
                                   </div>
@@ -3469,7 +3527,7 @@ export default function App() {
                                   <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
                                       <h3 className="text-lg font-bold text-slate-900 mb-4">Relevant Openings for {parsedData.roles[0] || 'Profile'}</h3>
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                          {openings.slice(0, 4).map((job) => (
+                                          {resumeMatchedOpenings.map(({ job, score }) => (
                                               <div key={job.job_id} className="p-4 border border-slate-100 rounded-xl hover:border-blue-200 hover:shadow-md transition-all flex justify-between items-center group">
                                                   <div>
                                                       <h4 className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{job.title}</h4>
@@ -3477,13 +3535,25 @@ export default function App() {
                                                       <div className="flex gap-4 mt-2">
                                                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{job.salary}</span>
                                                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{job.experience}</span>
+                                                          <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">{Math.min(98, 50 + score * 2)}% Match</span>
                                                       </div>
                                                   </div>
-                                                  <button className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-600 transition-all">
-                                                      Apply Now
-                                                  </button>
+                                                  {job.url && job.url !== '#' ? (
+                                                    <a href={job.url} target="_blank" rel="noreferrer" className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-600 transition-all">
+                                                        View Role
+                                                    </a>
+                                                  ) : (
+                                                    <button className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-600 transition-all">
+                                                        View Role
+                                                    </button>
+                                                  )}
                                               </div>
                                           ))}
+                                          {resumeMatchedOpenings.length === 0 && (
+                                            <div className="md:col-span-2 p-6 rounded-xl border border-slate-100 text-center text-sm text-slate-500">
+                                              No saved openings match this resume yet. Try refreshing listings or adding openings with matching skills.
+                                            </div>
+                                          )}
                                       </div>
                                   </div>
                               </div>
@@ -3704,43 +3774,10 @@ export default function App() {
                                     <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                                         <div>
                                             <label className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1.5">
-                                                <span>Gemini API Key</span>
-                                                <span className="text-[10px] font-medium bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-left">Recommended</span>
+                                                <span>Gemini</span>
+                                                <span className="text-[10px] font-medium bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-left">Server-side</span>
                                             </label>
-                                            <div className="relative">
-                                                <input 
-                                                    type="password" 
-                                                    value={geminiApiKey}
-                                                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                                                    placeholder="AIzaSy..."
-                                                    className="w-full pl-3 pr-10 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono" 
-                                                />
-                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center">
-                                                    {geminiApiKey ? <div className="w-2 h-2 rounded-full bg-emerald-500"></div> : <div className="w-2 h-2 rounded-full bg-slate-300"></div>}
-                                                </div>
-                                            </div>
-                                            <p className="mt-1 text-[11px] text-slate-500 text-left">Used for candidate ranking and matching algorithms.</p>
-                                        </div>
-                                        
-                                        <div className="h-px bg-slate-200 border-none"></div>
-
-                                        <div>
-                                            <label className="block text-xs font-semibold text-slate-700 mb-1.5 text-left">
-                                                ChatGPT API Key (OpenAI)
-                                            </label>
-                                            <div className="relative">
-                                                <input 
-                                                    type="password" 
-                                                    value={chatgptApiKey}
-                                                    onChange={(e) => setChatgptApiKey(e.target.value)}
-                                                    placeholder="sk-..."
-                                                    className="w-full pl-3 pr-10 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono" 
-                                                />
-                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center">
-                                                    {chatgptApiKey ? <div className="w-2 h-2 rounded-full bg-emerald-500"></div> : <div className="w-2 h-2 rounded-full bg-slate-300"></div>}
-                                                </div>
-                                            </div>
-                                            <p className="mt-1 text-[11px] text-slate-500 text-left">Used for drafting offer letters and rejection emails.</p>
+                                            <p className="mt-1 text-[11px] text-slate-500 text-left">Configured securely on the server.</p>
                                         </div>
                                     </div>
                                 </div>
