@@ -1,114 +1,478 @@
-# HireAI: Hiring Intelligence Dashboard
+# HireAI — Hiring Intelligence Dashboard
 
-HireAI is a comprehensive full-stack application designed to transform how organizations collect, analyze, and act on hiring data. By leveraging automated scraping, AI-powered requirement extraction, and sophisticated analytics, HireAI provides recruiters and HR professionals with deep insights into the competitive hiring landscape.
+> **Transform how your organization collects, analyzes, and acts on hiring data — all in one intelligent platform.**
 
-![Dashboard Preview](./screenshots/Dashboard.png)
+---
 
-## 🚀 Introduction
+## 📖 Introduction
 
-In today's fast-paced job market, staying ahead requires more than just browsing job boards. HireAI automates the "intelligence gathering" phase of recruitment by:
-- **Collecting** public job listings from major platforms like LinkedIn, Naukri, and Indeed.
-- **Extracting** structured requirements (skills, experience, salary ranges) using state-of-the-art AI models (OpenAI/Gemini).
-- **Analyzing** hiring trends and technology demand to identify market shifts.
-- **Reporting** actionable insights through a secure, high-performance dashboard.
+In today's hyper-competitive talent market, recruitment teams are overwhelmed with fragmented data spread across dozens of job boards, spreadsheets, and manual reports. Identifying what skills competitors are hiring for, which platforms yield the best candidates, or where the market is shifting — all of this traditionally requires hours of manual research.
+
+**HireAI eliminates that burden entirely.**
+
+HireAI is a full-stack Hiring Intelligence Platform built for modern HR and recruitment professionals. It acts as an always-on research assistant — autonomously crawling public job listings from platforms like LinkedIn, Naukri, and Indeed, then feeding that raw data through advanced AI models (OpenAI GPT-4o and Google Gemini Pro) to extract clean, structured intelligence: required skills, years of experience, tech stacks, salary bands, and more.
+
+But HireAI goes further than just job scraping. It layers in business intelligence from Apollo.io and CompanyEnrich to build deep profiles on hiring companies and the recruiters behind job postings — giving your team visibility into who is hiring, at what scale, and through which channels. The Indeed Autocomplete API ensures your search experience is fast and intuitive, surfacing accurate job title and location suggestions in real time.
+
+The result is a centralized, secure dashboard that gives recruiters and HR leaders a real-time, bird's-eye view of the competitive hiring landscape. Instead of guessing what the market demands, you can now see it — visualized through dynamic trend charts, tech-demand graphs, and recruiter intelligence panels that update automatically.
+
+Whether you are a solo recruiter trying to benchmark job requirements, a talent team tracking competitor hiring velocity, or an HR leader preparing quarterly workforce reports, HireAI provides the data infrastructure and AI-powered analytics to make confident, evidence-based hiring decisions.
+
+**What makes HireAI different:**
+
+- It runs entirely on your infrastructure — your data never leaves your environment.
+- All third-party API keys (OpenAI, Gemini, Apollo.io, CompanyEnrich) are proxied server-side and never exposed to the browser.
+- Background scraping jobs run silently via Celery workers, keeping the dashboard fast and responsive.
+- Redis caches platform data so the dashboard loads instantly, even with thousands of records.
+- Reports are exportable in PDF, Excel, and CSV formats — ready for stakeholder meetings in one click.
+- The platform is architected with MFA, JWT token rotation, and strict API proxying baked in from day one.
+
+HireAI is not just a scraper or a dashboard. It is a complete intelligence pipeline — from raw job listing to executive-ready insight — designed to give recruiting teams an unfair advantage in understanding the market before their competitors do.
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, Recharts (for dynamic analytics).
-- **Backend**: Django 5.0, Django REST Framework, Simple JWT (Authentication).
-- **Automation & Jobs**: Playwright (Web Scraping), Celery, Redis (Background Processing).
-- **AI Integration**: OpenAI GPT-4o / Google Gemini Pro for requirement parsing.
-- **Database**: SQLite (Local) / Support for PostgreSQL (Production).
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, Recharts |
+| **Backend** | Django 5.0, Django REST Framework, Simple JWT |
+| **Automation** | Playwright (Web Scraping), Celery (Task Queue), Redis (Broker + Cache) |
+| **AI / LLM** | OpenAI GPT-4o, Google Gemini Pro |
+| **Enrichment** | Apollo.io API, CompanyEnrich API |
+| **Search UX** | Indeed Autocomplete API |
+| **Database** | SQLite (via Django ORM) |
+| **Auth** | JWT Access/Refresh Token Rotation, OTP-based MFA |
+| **Exports** | PDF, Excel (.xlsx), CSV |
 
 ---
 
-## ⚙️ Setup & Installation
+## 📋 Prerequisites
 
-### Prerequisites
-- Python 3.10+
-- Node.js 18+
-- Redis Server (for background tasks)
+Before installing HireAI, make sure the following tools are installed on your system.
 
-### 1. Backend Setup
+### 1. Python 3.10+
+- Download: https://www.python.org/downloads/
+- Verify:
+```bash
+python --version
+```
+
+### 2. Node.js 18+
+- Download: https://nodejs.org/en/download
+- Or install via **nvm** (recommended):
+  - nvm for macOS/Linux: https://github.com/nvm-sh/nvm
+  - nvm for Windows: https://github.com/coreybutler/nvm-windows
+- Verify:
+```bash
+node --version
+npm --version
+```
+
+### 3. Redis Server
+Redis powers Celery's task queue and caches platform data for fast dashboard loads.
+
+- **macOS** (via Homebrew — https://brew.sh):
+```bash
+brew install redis && brew services start redis
+```
+- **Ubuntu/Debian:**
+```bash
+sudo apt update && sudo apt install redis-server
+sudo systemctl start redis
+```
+- **Windows:** Use WSL (https://learn.microsoft.com/en-us/windows/wsl/install) or the unofficial port at https://github.com/microsoftarchive/redis/releases
+
+- Verify:
+```bash
+redis-cli ping
+# Expected: PONG
+```
+
+### 4. Git
+- Download: https://git-scm.com/downloads
+
+---
+
+## 📦 Installation & Setup
+
+### Step 1 — Clone the Repository
+
+```bash
+git clone https://github.com/your-username/hireai.git
+cd hireai
+```
+
+---
+
+### Step 2 — Backend Setup (Django)
+
+#### 2.1 Create and Activate a Virtual Environment
+
 ```bash
 cd backend
-# Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
 
-# Install dependencies
+# macOS/Linux
+source venv/bin/activate
+
+# Windows
+.\venv\Scripts\activate
+```
+
+#### 2.2 Install Python Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-# Configure environment variables
+#### 2.3 Install Playwright Browsers
+
+```bash
+playwright install chromium
+```
+
+Playwright docs: https://playwright.dev/python/docs/intro
+
+#### 2.4 Configure Environment Variables
+
+```bash
 cp .env.example .env
-# Edit .env and add your API keys (OPENAI_API_KEY, etc.)
+```
 
-# Run migrations and start server
+Fill in all values — refer to the **API Keys & Configuration** section below for detailed instructions on obtaining each key:
+
+```env
+# ── Django Core ──────────────────────────────────────────
+SECRET_KEY=your-django-secret-key
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# ── Database ─────────────────────────────────────────────
+DATABASE_URL=sqlite:///db.sqlite3
+
+# ── Redis & Celery ────────────────────────────────────────
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# ── AI / LLM APIs ────────────────────────────────────────
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
+
+# ── Business Intelligence APIs ───────────────────────────
+APOLLO_API_KEY=your-apollo-api-key
+COMPANY_ENRICH_API_KEY=your-companyenrich-api-key
+
+# ── JWT Settings ─────────────────────────────────────────
+JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60
+JWT_REFRESH_TOKEN_LIFETIME_DAYS=7
+```
+
+#### 2.5 Run Migrations & Create Admin
+
+```bash
 python manage.py migrate
+python manage.py createsuperuser
+```
+
+#### 2.6 Start the Backend Server
+
+```bash
 python manage.py runserver
 ```
 
-### 2. Frontend Setup
+- API: `http://127.0.0.1:8000/api`
+- Admin Panel: `http://127.0.0.1:8000/admin`
+
+---
+
+### Step 3 — Frontend Setup (React + Vite)
+
 ```bash
 cd frontend
-# Install dependencies
 npm install
-
-# Configure environment variables
 cp .env.example .env
-
-# Start development server
-npm run dev
 ```
 
-### 3. Worker Setup (Optional - for Scraping)
+Configure `.env`:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000/api
+VITE_APP_NAME=HireAI
+```
+
+```bash
+npm run dev        # Development: http://localhost:5173
+npm run build      # Production build → dist/
+```
+
+---
+
+### Step 4 — Celery Worker Setup
+
 ```bash
 # Ensure Redis is running
-redis-server
+redis-cli ping
 
-# Start Celery worker (in backend directory)
+# Start worker (from backend/ with venv activated)
 celery -A core worker -l info -P solo
+
+# Optional: scheduled scraping jobs
+celery -A core beat -l info
 ```
 
----
+> Use `-P prefork` instead of `-P solo` on Linux/macOS in production for better concurrency.
 
-## ✨ Key Advantages
-
-- **🔒 Security First Architecture**:
-    - MFA (Multi-Factor Authentication) with OTP-based verification.
-    - JWT Access/Refresh token rotation and blacklisting.
-    - Strict Backend Proxying: API keys for third-party services (Apollo, OpenAI) never touch the frontend.
-- **🤖 AI-Driven Extraction**: Automatically converts messy, unstructured job descriptions into clean, structured data points (Skills, Years of Experience, Tech Stack).
-- **📊 Advanced Analytics**:
-    - **Trend Scoring**: Identify which companies are ramping up hiring.
-    - **Source Effectiveness**: Compare which platforms yield the best data.
-    - **Tech Demand**: Visual charts showing the most requested skills in the market.
-- **🖱️ Automated Collection**: Playwright-based scripts reduce manual data entry by 95%.
-- **📑 Professional Reporting**: Export intelligence reports in PDF, Excel, or CSV formats for stakeholder meetings.
+Celery docs: https://docs.celeryq.dev/en/stable/getting-started/introduction.html
 
 ---
 
-## 🔮 Future Improvements
+## 🔑 API Keys & Configuration
 
-- **🧠 Advanced Candidate Matching**: Integrate vector databases (like Pinecone) to match candidate resumes directly against scraped requirements using semantic search.
-- **🏢 Multi-Tenant SaaS Support**: Implement organizational silos to allow multiple companies to use the same platform securely.
-- **💬 AI Recruitment Assistant**: An integrated chatbot to help recruiters query their data using natural language (e.g., "Which companies in Bangalore are hiring for React developers?").
-- **🌍 Global Source Expansion**: Expand scraping capabilities to niche job boards and international platforms.
-- **🔔 Real-time Alerts**: Webhook and email notifications for "Hot Trends" or when a specific competitor posts a new role.
+HireAI integrates five external API providers. Below is a full setup guide for each one.
 
 ---
 
-## 📸 Screenshots
+### 1. 🤖 OpenAI API (GPT-4o) — AI Requirement Extraction
 
-| Landing Page | Hiring Trends |
-| :---: | :---: |
-| ![Landing](./screenshots/LandingPage.png) | ![Trends](./screenshots/HiringTrendPage.png) |
+**Purpose:** Parses raw, unstructured job descriptions into clean structured fields — skills, experience level, tech stack, salary range, and seniority — using GPT-4o.
 
-| Recruiter Intelligence | Report Generation |
-| :---: | :---: |
-| ![Recruiter](./screenshots/RecruiterInfo.png) | ![Reports](./screenshots/ReportGenerationPage.png) |
+**Used in:** `/api/tasks/extract-requirements/`
+
+**Setup:**
+
+1. Sign up at https://platform.openai.com/signup
+2. Go to API Keys: https://platform.openai.com/api-keys
+3. Click **Create new secret key** → name it `hireai` → copy the key immediately (shown only once).
+4. Set spending limits to avoid unexpected charges: https://platform.openai.com/account/limits
+5. Add to `.env`:
+
+```env
+OPENAI_API_KEY=sk-proj-...your-key...
+```
+
+**Model used:** `gpt-4o` (default). Switch to `gpt-4o-mini` for lower cost during development.
+
+**Pricing:** https://openai.com/pricing  
+**Full Docs:** https://platform.openai.com/docs/overview
 
 ---
 
-## ⚖️ Ethical & Legal Note
-HireAI is designed for the collection of **publicly available** data for research and competitive analysis. Users are responsible for complying with the Terms of Service of each data source and respecting `robots.txt` files. See `documentation/ETHICS_AND_SCRAPING.md` for more details.
+### 2. 🧠 Google Gemini API (Gemini Pro) — Alternative AI Extraction
+
+**Purpose:** Supported as a drop-in alternative to OpenAI for requirement extraction tasks. Useful for cost optimization or when OpenAI rate limits are reached.
+
+**Used in:** `/api/tasks/extract-requirements/` (toggled via settings)
+
+**Setup:**
+
+1. Go to Google AI Studio: https://aistudio.google.com
+2. Sign in with your Google account.
+3. Click **Get API Key** → **Create API Key** → select or create a Google Cloud project.
+4. Copy the generated key.
+5. Add to `.env`:
+
+```env
+GEMINI_API_KEY=AIzaSy...your-key...
+```
+
+**Free Tier:** Up to 60 requests/min on Gemini 1.5 Flash — sufficient for development.  
+**Paid Plans:** https://ai.google.dev/pricing  
+**Full Docs:** https://ai.google.dev/gemini-api/docs
+
+---
+
+### 3. 🏢 Apollo.io API — Company & Recruiter Intelligence
+
+**Purpose:** Powers the Recruiter Intelligence panel by fetching deep profiles on companies and individual recruiters from Apollo's database of 275M+ contacts and 73M+ companies.
+
+**Endpoints used internally:**
+
+| Apollo Endpoint | Purpose |
+|---|---|
+| `POST /v1/mixed_companies/search` | Find company details, logos, phone numbers, and headcount |
+| `POST /v1/mixed_people/search` | Find recruiter names, LinkedIn profiles, and contact data |
+
+**Proxied through:** `/api/tasks/apollo/organizations/` and `/api/tasks/apollo/people/`  
+*(Apollo API keys are never sent to the frontend — all calls are made server-side.)*
+
+**Setup:**
+
+1. Sign up at https://www.apollo.io/sign-up
+2. Navigate to **Settings → Integrations → API**: https://app.apollo.io/#/settings/integrations/api
+3. Click **Create API Key** → copy it.
+4. Add to `.env`:
+
+```env
+APOLLO_API_KEY=your-apollo-api-key
+```
+
+**Free Tier:** 50 credits/month on the free plan. For production use, a paid plan is recommended.  
+**Pricing:** https://www.apollo.io/pricing  
+**Full API Docs:** https://apolloio.github.io/apollo-api-docs/
+
+---
+
+### 4. 🔍 CompanyEnrich API — Secondary Enrichment Source
+
+**Purpose:** Used as a supplementary enrichment layer alongside Apollo.io to fill in missing company and person data — including firmographics, LinkedIn URLs, and contact details.
+
+**Used in:** Dashboard company profile enrichment flow.
+
+**Setup:**
+
+1. Sign up at https://app.companyenrich.com/companies
+2. Navigate to your account settings or API section to generate an API key.
+3. Add to `.env`:
+
+```env
+COMPANY_ENRICH_API_KEY=your-companyenrich-api-key
+```
+
+**Full Docs:** https://app.companyenrich.com/companies  
+**Support:** Refer to the CompanyEnrich dashboard for endpoint references and usage limits.
+
+---
+
+### 5. 🔎 Indeed Autocomplete API — Job Search UX
+
+**Purpose:** Provides real-time job title and location suggestions as users type in the search bar — improving search accuracy and reducing typos when setting up scraping tasks.
+
+**Used in:** Frontend search components (job title + location input fields).
+
+**Endpoint:** `https://www.indeed.com/autocomplete`
+
+**Usage:** This is a public endpoint used directly from the frontend. No API key is required.
+
+Example request:
+```
+GET https://www.indeed.com/autocomplete?q=software+engineer&l=Bangalore&co=IN&lang=en
+```
+
+> Note: Indeed's autocomplete is a public web API with no formal SLA or authentication. Usage should be reasonable and respectful of Indeed's Terms of Service.
+
+---
+
+### 6. 🔐 Django Secret Key — Security
+
+Django uses this key for cryptographic signing (sessions, CSRF tokens, etc.).
+
+**Generate a fresh key:**
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+Add to `.env`:
+```env
+SECRET_KEY=your-generated-secret-key
+```
+
+Never commit this value to version control.
+
+---
+
+### 7. 🗄️ SQLite — Database
+
+HireAI uses **SQLite** as its database — the default Django database engine. No installation or configuration is needed. Django automatically creates the `db.sqlite3` file in the project root when you run migrations.
+
+```bash
+python manage.py migrate
+```
+
+The database file is created at:
+```
+backend/db.sqlite3
+```
+
+**Key points:**
+- Zero setup required — SQLite is bundled with Python.
+- All data (jobs, users, extracted requirements, reports) is stored in a single portable file.
+- Django's ORM handles all queries, so switching databases later requires no code changes.
+- For local backups, simply copy `db.sqlite3` to a safe location.
+
+> To inspect the database directly, use **DB Browser for SQLite** (free GUI tool):  
+> https://sqlitebrowser.org/dl/
+
+SQLite Docs: https://www.sqlite.org/docs.html  
+Django Database Docs: https://docs.djangoproject.com/en/5.0/ref/databases/#sqlite-notes
+
+---
+
+## 🗺️ Internal API Endpoints (Django REST Framework)
+
+The frontend communicates exclusively with HireAI's internal Django API, which acts as a secure proxy to all external services. No API key ever touches the browser.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/auth/register/` | `POST` | User registration |
+| `/api/auth/login/` | `POST` | Login, returns JWT access + refresh tokens |
+| `/api/auth/token/refresh/` | `POST` | Rotate access token using refresh token |
+| `/api/auth/mfa/verify/` | `POST` | OTP verification for MFA flow |
+| `/api/auth/logout/` | `POST` | Blacklist refresh token (logout) |
+| `/api/tasks/dashboard/` | `GET` | Aggregated dashboard data hub |
+| `/api/tasks/extract-requirements/` | `POST` | Trigger AI-based job description parsing |
+| `/api/tasks/apollo/organizations/` | `POST` | Proxy to Apollo `mixed_companies/search` |
+| `/api/tasks/apollo/people/` | `POST` | Proxy to Apollo `mixed_people/search` |
+| `/api/tasks/scrape/` | `POST` | Trigger a new Playwright scraping job |
+| `/api/tasks/reports/export/` | `GET` | Export data as PDF / Excel / CSV |
+
+All endpoints require a valid JWT `Authorization: Bearer <token>` header except registration and login.
+
+---
+
+## 🌐 Data Collection Targets (Playwright Scraping)
+
+HireAI uses Playwright to collect publicly available job listings from the following platforms. These are not API integrations — they are browser-automated collection flows.
+
+| Platform | Data Collected |
+|---|---|
+| **LinkedIn** | Job title, company, location, description, posting date |
+| **Naukri** | Job title, company, salary range, skills, experience required |
+| **Indeed** | Job title, company, location, description, apply link |
+
+> All scraping is limited to publicly visible, non-authenticated pages. Respect each platform's `robots.txt` and Terms of Service. See `documentation/ETHICS_AND_SCRAPING.md`.
+
+---
+
+## ✅ Verifying Your Setup
+
+| Service | Check | Expected |
+|---|---|---|
+| Backend API | `http://127.0.0.1:8000/api` | JSON response |
+| Django Admin | `http://127.0.0.1:8000/admin` | Login page |
+| Frontend | `http://localhost:5173` | HireAI dashboard |
+| Redis | `redis-cli ping` | `PONG` |
+| SQLite | `ls backend/db.sqlite3` | File exists |
+| Celery | Terminal | `[celery@host] ready.` |
+| OpenAI | Test in Django shell | Valid JSON extraction result |
+| Apollo | Test via `/api/tasks/apollo/organizations/` | Company profile returned |
+
+---
+
+## ✨ Key Features
+
+- **AI-Driven Extraction** — Converts raw job postings into structured data: skills, experience, tech stack, seniority, and salary ranges via GPT-4o or Gemini Pro.
+- **Recruiter Intelligence** — Apollo.io + CompanyEnrich profiles on hiring companies and individual recruiters, including LinkedIn URLs and contact details.
+- **Hiring Trend Analytics** — Charts showing which companies are scaling, which skills are surging, and how market demand shifts over time.
+- **Smart Search** — Indeed Autocomplete powers real-time job title and location suggestions when setting up new scraping tasks.
+- **Automated Collection** — Playwright scraping across LinkedIn, Naukri, and Indeed reduces manual data entry by ~95%.
+- **Secure by Default** — MFA (OTP), JWT rotation + blacklisting, and all external API keys kept server-side.
+- **Professional Reporting** — Export intelligence reports in PDF, Excel, or CSV.
+
+---
+
+## 🔮 Roadmap
+
+- Semantic candidate matching via Pinecone / Weaviate vector databases
+- Multi-tenant SaaS with per-organization data silos
+- Natural language dashboard queries: *"Which Bangalore companies are hiring React devs this month?"*
+- Real-time webhook + email alerts for competitor job postings
+- Expansion to international and niche job boards
+
+---
+
+## ⚖️ Ethical & Legal Notice
+
+HireAI collects **publicly available** data only, for research and competitive analysis purposes. Users are solely responsible for complying with each platform's Terms of Service and `robots.txt` directives. Scraping authenticated, private, or restricted content is not supported.
+
+See `documentation/ETHICS_AND_SCRAPING.md` for full guidelines.
